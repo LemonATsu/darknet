@@ -140,12 +140,22 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
         det_s = in_s;
     }
 
+    double cam_fps = cvGetCaptureProperty(cap, CV_CAP_PROP_FPS);
+    double cam_w = cvGetCaptureProperty(cap, CV_CAP_PROP_FRAME_WIDTH);
+    double cam_h = cvGetCaptureProperty(cap, CV_CAP_PROP_FRAME_HEIGHT);
+    char buff[256];
+    sprintf(buff, "result_vid/%s", filename);
     int count = 0;
+    CvVideoWriter* writer = cvCreateVideoWriter("out.avi", CV_FOURCC('M', 'J', 'P', 'G'), 29, cvSize((int)cam_w, (int)cam_h), 1);
     cvNamedWindow("Demo", CV_WINDOW_NORMAL); 
     cvMoveWindow("Demo", 0, 0);
     cvResizeWindow("Demo", 1352, 1013);
 
     double before = get_wall_time();
+    if(writer == NULL) {
+        printf("no writer\n");
+        exit(0);
+    }
 
     while(1){
         ++count;
@@ -154,6 +164,9 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
             if(pthread_create(&detect_thread, 0, detect_in_thread, 0)) error("Thread creation failed");
 
             show_image(disp, "Demo");
+            IplImage* tovid = convert_image_to_cv(disp);
+            cvWriteFrame(writer, tovid);
+
             int c = cvWaitKey(1);
             if (c == 10){
                 if(frame_skip == 0) frame_skip = 60;
@@ -193,6 +206,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
             before = after;
         }
     }
+    cvReleaseVideoWriter(&writer);
 }
 #else
 void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const char *filename, char **names, image *labels, int classes, int frame_skip)

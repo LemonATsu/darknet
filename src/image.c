@@ -291,6 +291,25 @@ void rgbgr_image(image im)
 }
 
 #ifdef OPENCV
+IplImage* convert_image_to_cv(image p)
+{
+    int x, y, k;
+    image copy = copy_image(p);
+    constrain_image(copy);
+    if(p.c == 3) rgbgr_image(copy);
+    IplImage *disp = cvCreateImage(cvSize(p.w,p.h), IPL_DEPTH_8U, p.c);
+    int step = disp->widthStep;
+    for(y = 0; y < p.h; ++y){
+        for(x = 0; x < p.w; ++x){
+            for(k= 0; k < p.c; ++k){
+                disp->imageData[y*step + x*p.c + k] = (unsigned char)(get_pixel(copy,x,y,k)*255);
+            }
+        }
+    }
+    free_image(copy);
+    return disp;
+}
+
 void show_image_cv(image p, const char *name)
 {
     int x,y,k;

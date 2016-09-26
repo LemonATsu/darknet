@@ -1074,7 +1074,7 @@ void load_weights_upto(network *net, char *filename, int cutoff)
 
     int i;
     for(i = 0; i < net->n && i < cutoff; ++i){
-        layer l = net->layers[i];
+        layer l = net->layers[i]; 
         if (l.dontload) continue;
         if(l.type == CONVOLUTIONAL){
             load_convolutional_weights(l, fp);

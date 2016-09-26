@@ -154,7 +154,14 @@ void update_network_gpu(network net)
     int i;
     int update_batch = net.batch*net.subdivisions;
     float rate = get_current_rate(net);
+    int skip = net.train_fix_layer;
+ 
+
     for(i = 0; i < net.n; ++i){
+        /*if(skip && skip > i) {
+            continue;
+        }*/
+        //fprintf(stderr,"%d not skipped\n", i);
         layer l = net.layers[i];
         if(l.type == CONVOLUTIONAL){
             update_convolutional_layer_gpu(l, update_batch, rate, net.momentum, net.decay);

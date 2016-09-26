@@ -64,6 +64,7 @@ void show_image_collapsed(image p, char *name);
 void save_image_jpg(image p, char *name);
 image get_image_from_stream(CvCapture *cap);
 image ipl_to_image(IplImage* src);
+IplImage* convert_image_to_cv(image p);
 #endif
 
 void print_image(image m);

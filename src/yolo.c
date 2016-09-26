@@ -9,14 +9,18 @@
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
-
+#define TCC 20
+//char *voc_names[] = {"person", "bicycle", "motorbike", "car", "bus"};
 char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
-image voc_labels[20];
+//char *voc_names[] = {"aeroplane", "bike", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
+image voc_labels[TCC];
 
-void train_yolo(char *cfgfile, char *weightfile)
+
+void train_yolo(char *cfgfile, char *weightfile, int fix_layer)
 {
-    char *train_images = "/data/voc/train.txt";
-    char *backup_directory = "/home/pjreddie/backup/";
+    char *train_images = "/home/at/Documents/darknet/data/voc/comb_train.txt";
+    //char *train_images = "/home/at/Documents/darknet/data/voc/train.txt";
+    char *backup_directory = "/home/at/Documents/darknet/backup/";
     srand(time(0));
     data_seed = time(0);
     char *base = basecfg(cfgfile);
@@ -27,6 +31,7 @@ void train_yolo(char *cfgfile, char *weightfile)
         load_weights(&net, weightfile);
     }
     printf("Learning Rate: %g, Momentum: %g, Decay: %g\n", net.learning_rate, net.momentum, net.decay);
+    //*net.seen = 0;
     int imgs = net.batch*net.subdivisions;
     int i = *net.seen/imgs;
     data train, buffer;
@@ -57,6 +62,9 @@ void train_yolo(char *cfgfile, char *weightfile)
     pthread_t load_thread = load_data_in_thread(args);
     clock_t time;
     //while(i*imgs < N*120){
+    // fix weights before fix_layer.    
+    net.train_fix_layer = fix_layer;
+
     while(get_current_batch(net) < net.max_batches){
         i += 1;
         time=clock();
@@ -71,7 +79,13 @@ void train_yolo(char *cfgfile, char *weightfile)
         if (avg_loss < 0) avg_loss = loss;
         avg_loss = avg_loss*.9 + loss*.1;
 
-        printf("%d: %f, %f avg, %f rate, %lf seconds, %d images\n", i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs);
+        if(i%1000 != 0)printf("%d: %f, %f avg, %f rate, %lf seconds, %d images, %d fix layer\n"
+                , i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs, net.train_fix_layer);
+        else {
+            FILE *fp = fopen("training_log_4.txt", "a");
+            fprintf(fp, "%d: %f, %f avg, %f rate, %lf seconds, %d images\n", i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs);
+            fclose(fp);
+        }
         if(i%1000==0 || (i < 1000 && i%100 == 0)){
             char buff[256];
             sprintf(buff, "%s/%s_%d.weights", backup_directory, base, i);
@@ -115,6 +129,7 @@ void convert_detections(float *predictions, int classes, int num, int square, in
 void print_yolo_detections(FILE **fps, char *id, box *boxes, float **probs, int total, int classes, int w, int h)
 {
     int i, j;
+    //fprintf(stderr, "total : %d\n", total);
     for(i = 0; i < total; ++i){
         float xmin = boxes[i].x - boxes[i].w/2.;
         float xmax = boxes[i].x + boxes[i].w/2.;
@@ -127,8 +142,10 @@ void print_yolo_detections(FILE **fps, char *id, box *boxes, float **probs, int 
         if (ymax > h) ymax = h;
 
         for(j = 0; j < classes; ++j){
-            if (probs[i][j]) fprintf(fps[j], "%s %f %f %f %f %f\n", id, probs[i][j],
+            if (probs[i][j]) {
+                    fprintf(fps[j], "%s %f %f %f %f %f\n", id, probs[i][j],
                     xmin, ymin, xmax, ymax);
+            }
         }
     }
 }
@@ -144,8 +161,8 @@ void validate_yolo(char *cfgfile, char *weightfile)
     srand(time(0));
 
     char *base = "results/comp4_det_test_";
-    //list *plist = get_paths("data/voc.2007.test");
     list *plist = get_paths("/home/at/Documents/darknet/data/voc/2007_test.txt");
+    //list *plist = get_paths("/home/at/Documents/darknet/data/nthu_test.txt");
     //list *plist = get_paths("data/voc.2012.test");
     char **paths = (char **)list_to_array(plist);
 
@@ -158,6 +175,7 @@ void validate_yolo(char *cfgfile, char *weightfile)
     FILE **fps = calloc(classes, sizeof(FILE *));
     for(j = 0; j < classes; ++j){
         char buff[1024];
+        //fprintf(stderr, "%s\n", voc_names[j]);
         snprintf(buff, 1024, "%s%s.txt", base, voc_names[j]);
         fps[j] = fopen(buff, "w");
     }
@@ -215,6 +233,13 @@ void validate_yolo(char *cfgfile, char *weightfile)
             convert_detections(predictions, classes, l.n, square, side, w, h, thresh, probs, boxes, 0);
             if (nms) do_nms_sort(boxes, probs, side*side*l.n, classes, iou_thresh);
             print_yolo_detections(fps, id, boxes, probs, side*side*l.n, classes, w, h);
+            if (i % 500 == 0) {
+                draw_detections(val[t], l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, TCC);
+                char buff[256];
+                fprintf(stderr,"saving\n");
+                sprintf(buff, "check/%d", i);
+                save_image(val[t], buff);
+            }
             free(id);
             free_image(val[t]);
             free_image(val_resized[t]);
@@ -344,9 +369,10 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
         float *predictions = network_predict(net, X);
         printf("%s: Predicted in %f seconds.\n", input, sec(clock()-time));
         convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, probs, boxes, 0);
+        //fprintf(stderr, "%d classes\n", l.classes);
         if (nms) do_nms_sort(boxes, probs, l.side*l.side*l.n, l.classes, nms);
         //draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
-        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, 20);
+        draw_detections(im, l.side*l.side*l.n, thresh, boxes, probs, voc_names, voc_labels, TCC);
         save_image(im, "predictions");
         show_image(im, "predictions");
 
@@ -361,16 +387,167 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
     }
 }
 
+void extract_weight(char *cfgfile, char *cfgtar, char *weightfile, int upto)
+{
+    int major;
+    int minor;
+    FILE *fp = fopen(weightfile, "rb");
+    network origin_net = parse_network_cfg(cfgfile);
+    network target_net = parse_network_cfg(cfgtar);
+
+    fread(&major, sizeof(int), 1, fp);
+    fread(&minor, sizeof(int), 1, fp);
+    fclose(fp);
+
+    int transpose = (major > 1000) || (minor > 1000);
+
+    load_weights(&origin_net, weightfile);
+    load_weights_upto(&target_net, weightfile, 19);
+
+
+    /* our target
+     * 14 : person
+     * 1  : bike
+     * 13 : motor
+     * 6  : car
+     * 5  : bus
+     * */
+    // fully-connected layer
+    layer ol = origin_net.layers[origin_net.n-2];
+    layer tl = target_net.layers[target_net.n-2];
+    //int target_class[] = {14, 1, 13, 6, 5, 21};
+    int target_class[] = {14, 1, 13, 6, 5, 21};
+    int batch_normalize = ol.batch_normalize;
+    int length = ol.inputs;
+    int num_cell = 7 * 7;
+    int tl_classes = 5;
+    int ol_classes = 20;
+    int batch = ol.batch;
+    int outputs = tl.outputs;
+    int inputs = tl.inputs;
+    int num = 2; // number of bounding box
+
+    tl.batch_normalize = batch_normalize;
+    tl.activation = ol.activation;
+
+    // steps by steps : select classes weight first.
+    int i, j, k, x, y, end;
+    for(i = 0, x = 0, y = 0; i < num_cell; i++) {
+        for(j = 0; j < tl_classes; j++, y++) {
+            //k = i * length * ol_classes + target_class[j] * length
+            k = (i * ol_classes + target_class[j]) * length;
+            x = (i * tl_classes + j) * length;
+            end = k + length;
+            for(; k < end; k++, x++) {
+                tl.weights[x] = ol.weights[k];
+                tl.weight_updates[x] = ol.weight_updates[k];
+            }
+            printf("x %d k %d end %d\n", x, k, end);
+            k = (i * ol_classes) + target_class[j];
+            y = (i * tl_classes + j);
+            tl.biases[y] = ol.biases[k];
+            tl.bias_updates[y] = ol.bias_updates[k];
+            printf("y %d k %d end %d\n", y, k, end);
+        }
+    }
+    k = num_cell * ol_classes * length;
+    end = tl.inputs * tl.outputs;
+    x = num_cell * tl_classes * length; 
+    for(;k < end; k++, x++) {
+        tl.weights[x] = ol.weights[k];
+        tl.weight_updates[x] = ol.weight_updates[k];
+    }
+            printf("x %d k %d end %d\n", x, k, end);
+    k = num_cell * ol_classes;
+    end = ol.outputs;
+    y = num_cell * tl_classes;
+    printf("y %d k %d end %d\n", y, k, end);
+    for(;k < end; k++, y++) {
+        tl.biases[y] = ol.biases[k];
+        tl.bias_updates[y] = ol.bias_updates[k];
+    }
+    /*
+    for(i = 0, x = 0, y = 0; i < 6; i++) {
+        j = (target_class[i]) * num_cell * length;
+        end = (i < 5) ? j + num_cell * length : ol.outputs * length;
+        printf("%d %d\n", j, end);
+        // copy input weights
+        for(;j < end; j++, x++) {
+            tl.weights[x] = ol.weights[j];
+            tl.weight_updates[x] = ol.weight_updates[j];
+        }
+        // copy outputs scale, means, any kinds of data related to classes.
+        j = (target_class[i]) * num_cell;
+        end = (i < 5) ? j + num_cell : ol.outputs;
+        printf("%d %d\n", j, end);
+
+        for(; j < end; j ++, y++) {
+            tl.biases[y] = ol.biases[j];
+            tl.bias_updates[y] = ol.bias_updates[j];
+
+            if(batch_normalize) {
+                tl.scales[y] = ol.scales[j];
+                tl.scale_updates[y] = ol.scale_updates[j];
+                tl.mean[y] = ol.mean[j];
+                tl.mean_delta[y] = ol.mean_delta[j];
+                tl.variance[y] = ol.variance[j];
+                tl.variance_delta[y] = ol.variance_delta[j];
+            
+                tl.rolling_mean[y] = ol.rolling_mean[j];
+                tl.rolling_variance[y] = ol.rolling_variance[j];
+            
+                tl.x[y] = ol.x[j];
+                tl.x_norm[y] = ol.x_norm[j];
+            }
+        }
+    }
+    printf("%d %d\n", x, y);
+    */
+#ifdef GPU
+    printf("make in GPU : %f %f\n", tl.weights[0], ol.weights[57344]);
+    tl.weights_gpu = cuda_make_array(tl.weights, outputs*inputs);
+    printf("make in GPU\n");
+    tl.biases_gpu = cuda_make_array(tl.biases, outputs);
+
+    printf("make in GPU\n");
+    tl.weight_updates_gpu = cuda_make_array(tl.weight_updates, outputs*inputs);
+    tl.bias_updates_gpu = cuda_make_array(tl.bias_updates, outputs);
+
+    printf("make in GPU\n");
+    tl.output_gpu = cuda_make_array(tl.output, outputs*batch);
+    tl.delta_gpu = cuda_make_array(tl.delta, outputs*batch);
+    if(batch_normalize){
+        tl.scales_gpu = cuda_make_array(tl.scales, outputs);
+        tl.scale_updates_gpu = cuda_make_array(tl.scale_updates, outputs);
+
+        tl.mean_gpu = cuda_make_array(tl.mean, outputs);
+        tl.variance_gpu = cuda_make_array(tl.variance, outputs);
+
+        tl.rolling_mean_gpu = cuda_make_array(tl.mean, outputs);
+        tl.rolling_variance_gpu = cuda_make_array(tl.variance, outputs);
+
+        tl.mean_delta_gpu = cuda_make_array(tl.mean, outputs);
+        tl.variance_delta_gpu = cuda_make_array(tl.variance, outputs);
+
+        tl.x_gpu = cuda_make_array(tl.output, tl.batch*outputs);
+        tl.x_norm_gpu = cuda_make_array(tl.output, tl.batch*outputs);
+    }
+#endif
+    char buff[256];
+    sprintf(buff, "%s/%s.weights", "weights", "5classes_init");
+    save_weights(target_net, buff);
+}
+
 void run_yolo(int argc, char **argv)
 {
     int i;
-    for(i = 0; i < 20; ++i){
+    for(i = 0; i < TCC; ++i){
         char buff[256];
         sprintf(buff, "data/labels/%s.png", voc_names[i]);
         voc_labels[i] = load_image_color(buff, 0, 0);
     }
 
-    float thresh = find_float_arg(argc, argv, "-thresh", .2);
+    float thresh = find_float_arg(argc, argv, "-thresh", .1);
     int cam_index = find_int_arg(argc, argv, "-c", 0);
     int frame_skip = find_int_arg(argc, argv, "-s", 0);
     if(argc < 4){
@@ -381,9 +558,15 @@ void run_yolo(int argc, char **argv)
     char *cfg = argv[3];
     char *weights = (argc > 4) ? argv[4] : 0;
     char *filename = (argc > 5) ? argv[5]: 0;
+    int upto = (argc > 6) ? atoi(argv[6]): 0;
+
+
     if(0==strcmp(argv[2], "test")) test_yolo(cfg, weights, filename, thresh);
-    else if(0==strcmp(argv[2], "train")) train_yolo(cfg, weights);
+    else if(0==strcmp(argv[2], "train")) train_yolo(cfg, weights, 0);
     else if(0==strcmp(argv[2], "valid")) validate_yolo(cfg, weights);
     else if(0==strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
-    else if(0==strcmp(argv[2], "demo")) demo(cfg, weights, thresh, cam_index, filename, voc_names, voc_labels, 20, frame_skip);
+    else if(0==strcmp(argv[2], "demo")) demo(cfg, weights, thresh, cam_index, filename, voc_names, voc_labels, TCC, frame_skip);
+    else if(0==strcmp(argv[2], "extract")) extract_weight(cfg, filename, weights, upto);
+
 }
+
