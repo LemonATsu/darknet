@@ -5,20 +5,22 @@
 #include "parser.h"
 #include "box.h"
 #include "demo.h"
+#include "yolo.h"
 
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
-#define TCC 20
-//char *voc_names[] = {"person", "bicycle", "motorbike", "car", "bus"};
-char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
+#define TCC 5
+char *voc_names[] = {"person", "bicycle", "motorbike", "car", "bus"};
+//char *voc_names[] = {"aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
 //char *voc_names[] = {"aeroplane", "bike", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
 image voc_labels[TCC];
 
 
 void train_yolo(char *cfgfile, char *weightfile, int fix_layer)
 {
-    char *train_images = "/home/at/Documents/darknet/data/voc/comb_train.txt";
+    //char *train_images = "/home/at/Documents/darknet/data/voc/comb_train.txt";
+    char *train_images = "/home/at/Documents/darknet/data/voc/train_csim.txt";
     //char *train_images = "/home/at/Documents/darknet/data/voc/train.txt";
     char *backup_directory = "/home/at/Documents/darknet/backup/";
     srand(time(0));
@@ -82,7 +84,7 @@ void train_yolo(char *cfgfile, char *weightfile, int fix_layer)
         if(i%1000 != 0)printf("%d: %f, %f avg, %f rate, %lf seconds, %d images, %d fix layer\n"
                 , i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs, net.train_fix_layer);
         else {
-            FILE *fp = fopen("training_log_4.txt", "a");
+            FILE *fp = fopen("training_log_csim.txt", "a");
             fprintf(fp, "%d: %f, %f avg, %f rate, %lf seconds, %d images\n", i, loss, avg_loss, get_current_rate(net), sec(clock()-time), i*imgs);
             fclose(fp);
         }
@@ -189,7 +191,7 @@ void validate_yolo(char *cfgfile, char *weightfile)
 
     float thresh = .001;
     int nms = 1;
-    float iou_thresh = .5;
+    float iou_thresh = .35;
 
     int nthreads = 2;
     image *val = calloc(nthreads, sizeof(image));
@@ -334,6 +336,50 @@ void validate_yolo_recall(char *cfgfile, char *weightfile)
     }
 }
 
+detector init_detector(char *cfgfile, char *weightfile)
+{
+    int j;
+    detector dec = {0};
+    dec.net = parse_network_cfg(cfgfile);
+    load_weights(&(dec.net), weightfile);
+    set_batch_network(&(dec.net), 1);
+    detection_layer l = dec.net.layers[dec.net.n-1];
+
+    dec.nms = .3;
+    dec.boxes = calloc(l.side*l.side*l.n, sizeof(box));
+    dec.probs = calloc(l.side*l.side*l.n, sizeof(float *));
+    for(j = 0; j < l.side*l.side*l.n; ++j) dec.probs[j] = calloc(l.classes, sizeof(float *));
+
+    return dec;
+}
+
+void predict(detector* dec, image im, float thresh)
+{
+    // After calling this function, the detection result will be put in dec.probs/dec.boxes
+    detection_layer l = dec->net.layers[dec->net.n-1];
+    image sized = resize_image(im, dec->net.w, dec->net.h);
+    float *X = sized.data;
+    float *predictions = network_predict(dec->net, X);
+    convert_detections(predictions, l.classes, l.n, l.sqrt, l.side, 1, 1, thresh, dec->probs, dec->boxes, 0);
+    do_nms_sort(dec->boxes, dec->probs, l.side*l.side*l.n, l.classes, dec->nms);
+    
+    free_image(sized);
+}
+
+void portable_test(char *cfgfile, char *weightfile, char *filename, float thresh)
+{
+    detector dec = init_detector(cfgfile, weightfile);
+    detection_layer l = dec.net.layers[dec.net.n-1];
+    char buff[256];
+    char *input = buff;
+    strncpy(input, filename, 256);
+    image im = load_image_color(input,0,0);
+    predict(&dec, im, 0.1);
+    draw_detections(im, l.side*l.side*l.n, thresh, dec.boxes, dec.probs, voc_names, voc_labels, TCC);
+    save_image(im, "predictions");
+    free_image(im);
+}
+
 void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
 {
 
@@ -348,7 +394,7 @@ void test_yolo(char *cfgfile, char *weightfile, char *filename, float thresh)
     char buff[256];
     char *input = buff;
     int j;
-    float nms=.5;
+    float nms=.3;
     box *boxes = calloc(l.side*l.side*l.n, sizeof(box));
     float **probs = calloc(l.side*l.side*l.n, sizeof(float *));
     for(j = 0; j < l.side*l.side*l.n; ++j) probs[j] = calloc(l.classes, sizeof(float *));
@@ -567,6 +613,7 @@ void run_yolo(int argc, char **argv)
     else if(0==strcmp(argv[2], "recall")) validate_yolo_recall(cfg, weights);
     else if(0==strcmp(argv[2], "demo")) demo(cfg, weights, thresh, cam_index, filename, voc_names, voc_labels, TCC, frame_skip);
     else if(0==strcmp(argv[2], "extract")) extract_weight(cfg, filename, weights, upto);
+    else if(0==strcmp(argv[2], "port"))  portable_test(cfg, weights, filename, thresh);
 
 }
 
